@@ -334,22 +334,35 @@ Public Class FACTURA
                     Dim nsmgr As New XmlNamespaceManager(xml.NameTable)
                     nsmgr.AddNamespace("cfdi", "http://www.sat.gob.mx/cfd/4")
 
-                    Dim compNode As XmlNode = xml.SelectSingleNode("//cfdi:Comprobante", nsmgr)
-                    Dim emisorNode As XmlNode = xml.SelectSingleNode("//cfdi:Emisor", nsmgr)
-                    Dim receptorNode As XmlNode = xml.SelectSingleNode("//cfdi:Receptor", nsmgr)
+                    Dim selectNode = Function(primaryXpath As String, fallbackXpath As String) As XmlNode
+                                         Dim node As XmlNode = xml.SelectSingleNode(primaryXpath, nsmgr)
+                                         If node Is Nothing Then
+                                             node = xml.SelectSingleNode(fallbackXpath)
+                                         End If
+                                         Return node
+                                     End Function
 
-                    Dim serie As String = If(compNode?.Attributes("Serie") IsNot Nothing, compNode.Attributes("Serie").Value, "")
-                    Dim folio As String = If(compNode?.Attributes("Folio") IsNot Nothing, compNode.Attributes("Folio").Value, "")
-                    Dim fecha As String = If(compNode?.Attributes("Fecha") IsNot Nothing, compNode.Attributes("Fecha").Value, "")
-                    Dim subtotalStr As String = If(compNode?.Attributes("SubTotal") IsNot Nothing, compNode.Attributes("SubTotal").Value, "")
-                    Dim totalStr As String = If(compNode?.Attributes("Total") IsNot Nothing, compNode.Attributes("Total").Value, "")
-                    Dim ivaStr As String = ""
+                    Dim compNode As XmlNode = selectNode("//cfdi:Comprobante", "//*[local-name()='Comprobante']")
+                    Dim emisorNode As XmlNode = selectNode("//cfdi:Emisor", "//*[local-name()='Emisor']")
+                    Dim receptorNode As XmlNode = selectNode("//cfdi:Receptor", "//*[local-name()='Receptor']")
+
+                    Dim valueOrDefault = Function(val As String, defaultVal As String) As String
+                                            If String.IsNullOrWhiteSpace(val) Then Return defaultVal
+                                            Return val
+                                        End Function
+
+                    Dim serie As String = valueOrDefault(If(compNode?.Attributes("Serie") IsNot Nothing, compNode.Attributes("Serie").Value, ""), "N/D")
+                    Dim folio As String = valueOrDefault(If(compNode?.Attributes("Folio") IsNot Nothing, compNode.Attributes("Folio").Value, ""), "N/D")
+                    Dim fecha As String = valueOrDefault(If(compNode?.Attributes("Fecha") IsNot Nothing, compNode.Attributes("Fecha").Value, ""), "N/D")
+                    Dim subtotalStr As String = valueOrDefault(If(compNode?.Attributes("SubTotal") IsNot Nothing, compNode.Attributes("SubTotal").Value, ""), "0.00")
+                    Dim totalStr As String = valueOrDefault(If(compNode?.Attributes("Total") IsNot Nothing, compNode.Attributes("Total").Value, ""), "0.00")
+                    Dim ivaStr As String = "0.00"
                     Dim trasladoGlobal As XmlNode = xml.SelectSingleNode("//cfdi:Comprobante/cfdi:Impuestos/cfdi:Traslados/cfdi:Traslado", nsmgr)
                     If trasladoGlobal Is Nothing Then
                         trasladoGlobal = xml.SelectSingleNode("//*[local-name()='Comprobante']/*[local-name()='Impuestos']/*[local-name()='Traslados']/*[local-name()='Traslado']")
                     End If
                     If trasladoGlobal IsNot Nothing Then
-                        ivaStr = If(trasladoGlobal.Attributes("Importe") IsNot Nothing, trasladoGlobal.Attributes("Importe").Value, "")
+                        ivaStr = valueOrDefault(If(trasladoGlobal.Attributes("Importe") IsNot Nothing, trasladoGlobal.Attributes("Importe").Value, ""), "0.00")
                     End If
 
                     doc.Add(New Paragraph("FACTURA CFDI 4.0 (NO TIMBRADA)", tituloFont))
