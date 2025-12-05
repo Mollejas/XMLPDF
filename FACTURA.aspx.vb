@@ -277,10 +277,7 @@ Public Class FACTURA
     End Sub
 
     ' ===================================================================
-    ' GENERAR PDF SIMPLE BASADO EN EL XML
-    ' ===================================================================
-    ' ===================================================================
-    ' GENERAR PDF SIMPLE BASADO EN EL XML
+    ' GENERAR PDF CON FORMATO DE FACTURA (SIN MOSTRAR XML)
     ' ===================================================================
     Private Sub GenerarPDF(xmlPath As String, pdfPath As String)
         If String.IsNullOrEmpty(xmlPath) OrElse Not File.Exists(xmlPath) Then
@@ -296,96 +293,272 @@ Public Class FACTURA
             Directory.CreateDirectory(pdfDir)
         End If
 
-        Dim doc As iTextSharp.text.Document = Nothing
-        Dim writer As iTextSharp.text.pdf.PdfWriter = Nothing
-        Dim fs As FileStream = Nothing
-
         Try
-            ' 1. Crear FileStream
-            fs = New FileStream(pdfPath, FileMode.Create, FileAccess.Write, FileShare.None)
+            Using fs As New FileStream(pdfPath, FileMode.Create, FileAccess.Write, FileShare.None)
+                Using doc As New iTextSharp.text.Document(iTextSharp.text.PageSize.LETTER, 36, 36, 36, 36)
+                    iTextSharp.text.pdf.PdfWriter.GetInstance(doc, fs)
 
-            ' 2. Crear Document
-            doc = New iTextSharp.text.Document(iTextSharp.text.PageSize.LETTER, 36, 36, 36, 36)
+                    doc.Open()
 
-            ' 3. Crear Writer
-            writer = iTextSharp.text.pdf.PdfWriter.GetInstance(doc, fs)
 
-            ' 4. Abrir documento
-            doc.Open()
+                    Dim verdeSat As New BaseColor(0, 135, 80)
+                    Dim grisClaro As New BaseColor(240, 240, 240)
 
-            ' Fuentes
-            Dim tituloFont As New iTextSharp.text.Font(iTextSharp.text.Font.FontFamily.HELVETICA, 16, iTextSharp.text.Font.BOLD)
-            Dim normalFont As New iTextSharp.text.Font(iTextSharp.text.Font.FontFamily.HELVETICA, 10, iTextSharp.text.Font.NORMAL)
+                    Dim tituloFont As New iTextSharp.text.Font(iTextSharp.text.Font.FontFamily.HELVETICA, 16, iTextSharp.text.Font.BOLD, BaseColor.WHITE)
+                    Dim sectionFont As New iTextSharp.text.Font(iTextSharp.text.Font.FontFamily.HELVETICA, 12, iTextSharp.text.Font.BOLD)
+                    Dim normalFont As New iTextSharp.text.Font(iTextSharp.text.Font.FontFamily.HELVETICA, 10, iTextSharp.text.Font.NORMAL)
+                    Dim boldFont As New iTextSharp.text.Font(iTextSharp.text.Font.FontFamily.HELVETICA, 10, iTextSharp.text.Font.BOLD)
+                    Dim whiteBold As New iTextSharp.text.Font(iTextSharp.text.Font.FontFamily.HELVETICA, 10, iTextSharp.text.Font.BOLD, BaseColor.WHITE)
 
-            ' Agregar contenido
-            doc.Add(New iTextSharp.text.Paragraph("FACTURA CFDI 4.0 (NO TIMBRADA)", tituloFont))
-            doc.Add(New iTextSharp.text.Paragraph("LA CASA DEL AJUSTE DE MOTOR", normalFont))
-            doc.Add(New iTextSharp.text.Paragraph(" ", normalFont))
+                    ' Cargar XML
+                    Dim xml As New XmlDocument()
+                    xml.Load(xmlPath)
 
-            ' Cargar XML
-            Dim xml As New XmlDocument()
-            xml.Load(xmlPath)
+                    Dim nsmgr As New XmlNamespaceManager(xml.NameTable)
+                    nsmgr.AddNamespace("cfdi", "http://www.sat.gob.mx/cfd/4")
 
-            Dim nsmgr As New XmlNamespaceManager(xml.NameTable)
-            nsmgr.AddNamespace("cfdi", "http://www.sat.gob.mx/cfd/4")
+                    Dim selectNode = Function(primaryXpath As String, fallbackXpath As String) As XmlNode
+                                         Dim node As XmlNode = xml.SelectSingleNode(primaryXpath, nsmgr)
+                                         If node Is Nothing Then
+                                             node = xml.SelectSingleNode(fallbackXpath)
+                                         End If
+                                         Return node
+                                     End Function
 
-            Dim compNode As XmlNode = xml.SelectSingleNode("//cfdi:Comprobante", nsmgr)
+                    Dim compNode As XmlNode = selectNode("//cfdi:Comprobante", "//*[local-name()='Comprobante']")
+                    Dim emisorNode As XmlNode = selectNode("//cfdi:Emisor", "//*[local-name()='Emisor']")
+                    Dim receptorNode As XmlNode = selectNode("//cfdi:Receptor", "//*[local-name()='Receptor']")
 
-            If compNode IsNot Nothing Then
-                Dim serie As String = If(compNode.Attributes("Serie") IsNot Nothing, compNode.Attributes("Serie").Value, "")
-                Dim folio As String = If(compNode.Attributes("Folio") IsNot Nothing, compNode.Attributes("Folio").Value, "")
-                Dim fecha As String = If(compNode.Attributes("Fecha") IsNot Nothing, compNode.Attributes("Fecha").Value, "")
-                Dim total As String = If(compNode.Attributes("Total") IsNot Nothing, compNode.Attributes("Total").Value, "")
+                    Dim valueOrDefault = Function(val As String, defaultVal As String) As String
+                                            If String.IsNullOrWhiteSpace(val) Then Return defaultVal
+                                            Return val
+                                        End Function
 
-                doc.Add(New iTextSharp.text.Paragraph("Serie: " & serie, normalFont))
-                doc.Add(New iTextSharp.text.Paragraph("Folio: " & folio, normalFont))
-                doc.Add(New iTextSharp.text.Paragraph("Fecha: " & fecha, normalFont))
-                doc.Add(New iTextSharp.text.Paragraph("Total: " & total, normalFont))
-                doc.Add(New iTextSharp.text.Paragraph(" ", normalFont))
-            End If
+                    Dim getAttr = Function(node As XmlNode, attrName As String, Optional defaultVal As String = "") As String
+                                      If node Is Nothing OrElse node.Attributes Is Nothing Then Return defaultVal
 
-            doc.Add(New iTextSharp.text.Paragraph("XML generado (vista rápida):", normalFont))
-            doc.Add(New iTextSharp.text.Paragraph(" ", normalFont))
+                                      Dim attr = node.Attributes.Cast(Of XmlAttribute)() _
+                                          .FirstOrDefault(Function(a) String.Equals(a.LocalName, attrName, StringComparison.OrdinalIgnoreCase) _
+                                                                    OrElse String.Equals(a.Name, attrName, StringComparison.OrdinalIgnoreCase))
 
-            Dim xmlTexto As String = File.ReadAllText(xmlPath)
-            Dim chunk As New iTextSharp.text.Paragraph(xmlTexto, New iTextSharp.text.Font(iTextSharp.text.Font.FontFamily.COURIER, 7))
-            doc.Add(chunk)
+                                      If attr Is Nothing Then Return defaultVal
+                                      Return valueOrDefault(attr.Value, defaultVal)
+                                  End Function
 
+                    Dim serie As String = valueOrDefault(getAttr(compNode, "Serie"), "N/D")
+                    Dim folio As String = valueOrDefault(getAttr(compNode, "Folio"), "N/D")
+                    Dim fecha As String = valueOrDefault(getAttr(compNode, "Fecha"), "N/D")
+                    Dim formaPago As String = valueOrDefault(getAttr(compNode, "FormaPago"), "N/D")
+                    Dim metodoPago As String = valueOrDefault(getAttr(compNode, "MetodoPago"), "N/D")
+                    Dim lugarExp As String = valueOrDefault(getAttr(compNode, "LugarExpedicion"), "N/D")
+                    Dim moneda As String = valueOrDefault(getAttr(compNode, "Moneda"), "MXN")
+                    Dim tipoComp As String = valueOrDefault(getAttr(compNode, "TipoDeComprobante"), "I")
+
+                    Dim subtotalStr As String = valueOrDefault(getAttr(compNode, "SubTotal"), "0.00")
+                    Dim totalStr As String = valueOrDefault(getAttr(compNode, "Total"), "0.00")
+                    Dim ivaStr As String = "0.00"
+                    Dim trasladoGlobal As XmlNode = xml.SelectSingleNode("//cfdi:Comprobante/cfdi:Impuestos/cfdi:Traslados/cfdi:Traslado", nsmgr)
+                    If trasladoGlobal Is Nothing Then
+                        trasladoGlobal = xml.SelectSingleNode("//*[local-name()='Comprobante']/*[local-name()='Impuestos']/*[local-name()='Traslados']/*[local-name()='Traslado']")
+                    End If
+                    If trasladoGlobal IsNot Nothing Then
+                        ivaStr = valueOrDefault(getAttr(trasladoGlobal, "Importe"), "0.00")
+                    End If
+
+                    ' Encabezado estilo factura
+                    Dim topBar As New PdfPTable(1)
+                    topBar.WidthPercentage = 100
+                    Dim topCell As New PdfPCell(New Phrase("Factura CFDI 4.0", tituloFont)) With {
+                        .BackgroundColor = verdeSat,
+                        .HorizontalAlignment = Element.ALIGN_CENTER,
+                        .PaddingTop = 10,
+                        .PaddingBottom = 10,
+                        .Border = Rectangle.NO_BORDER
+                    }
+                    topBar.AddCell(topCell)
+                    doc.Add(topBar)
+
+                    Dim headerTable As New PdfPTable(2)
+                    headerTable.WidthPercentage = 100
+                    headerTable.SetWidths(New Single() {2.3F, 1.7F})
+                    headerTable.SpacingAfter = 6
+
+                    Dim emisorParagraph As New Paragraph()
+                    emisorParagraph.Add(New Phrase("Emisor" & vbLf, whiteBold))
+                    emisorParagraph.Add(New Phrase(valueOrDefault(getAttr(emisorNode, "Nombre"), "N/D") & vbLf, whiteBold))
+                    emisorParagraph.Add(New Phrase("RFC: " & valueOrDefault(getAttr(emisorNode, "Rfc"), "N/D") & vbLf, whiteBold))
+                    emisorParagraph.Add(New Phrase("Régimen: " & valueOrDefault(getAttr(emisorNode, "RegimenFiscal"), "N/D"), whiteBold))
+
+                    Dim emisorCell As New PdfPCell(emisorParagraph) With {
+                        .BackgroundColor = verdeSat,
+                        .Padding = 10,
+                        .Border = Rectangle.NO_BORDER
+                    }
+
+                    Dim folioParagraph As New Paragraph()
+                    folioParagraph.Add(New Phrase("Serie/Folio: " & serie & " - " & folio & vbLf, whiteBold))
+                    folioParagraph.Add(New Phrase("Fecha: " & fecha & vbLf, whiteBold))
+                    folioParagraph.Add(New Phrase("Lugar de expedición: " & lugarExp, whiteBold))
+
+                    Dim folioCell As New PdfPCell(folioParagraph) With {
+                        .BackgroundColor = verdeSat,
+                        .Padding = 10,
+                        .HorizontalAlignment = Element.ALIGN_RIGHT,
+                        .Border = Rectangle.NO_BORDER
+                    }
+
+                    headerTable.AddCell(emisorCell)
+                    headerTable.AddCell(folioCell)
+                    doc.Add(headerTable)
+
+                    ' Bloques de receptor y datos de pago
+                    Dim receptorTable As New PdfPTable(2)
+                    receptorTable.WidthPercentage = 100
+                    receptorTable.SetWidths(New Single() {2.0F, 1.0F})
+                    receptorTable.SpacingAfter = 6
+
+                    Dim receptorContent As String = "Receptor" & vbLf & _
+                        valueOrDefault(getAttr(receptorNode, "Nombre"), "N/D") & vbLf & _
+                        "RFC: " & valueOrDefault(getAttr(receptorNode, "Rfc"), "N/D") & vbLf & _
+                        "Uso CFDI: " & valueOrDefault(getAttr(receptorNode, "UsoCFDI"), "N/D")
+
+                    Dim receptorCell As New PdfPCell(New Phrase(receptorContent, boldFont)) With {
+                        .Padding = 10,
+                        .BackgroundColor = grisClaro,
+                        .BorderColor = verdeSat,
+                        .BorderWidth = 1
+                    }
+
+                    Dim datosPago As New Paragraph()
+                    datosPago.Add(New Phrase("Datos fiscales" & vbLf, boldFont))
+                    datosPago.Add(New Phrase("Forma de pago: " & formaPago & vbLf, normalFont))
+                    datosPago.Add(New Phrase("Método de pago: " & metodoPago & vbLf, normalFont))
+                    datosPago.Add(New Phrase("Tipo comprobante: " & tipoComp & vbLf, normalFont))
+                    datosPago.Add(New Phrase("Moneda: " & moneda, normalFont))
+
+                    Dim datosPagoCell As New PdfPCell(datosPago) With {
+                        .Padding = 10,
+                        .BackgroundColor = grisClaro,
+                        .BorderColor = verdeSat,
+                        .BorderWidth = 1
+                    }
+
+                    receptorTable.AddCell(receptorCell)
+                    receptorTable.AddCell(datosPagoCell)
+                    doc.Add(receptorTable)
+
+                    ' Tabla de conceptos
+                    Dim conceptosNodes As XmlNodeList = xml.SelectNodes("//*[local-name()='Conceptos']/*[local-name()='Concepto']")
+                    If conceptosNodes IsNot Nothing AndAlso conceptosNodes.Count > 0 Then
+                        Dim conceptosTitle As New PdfPTable(1)
+                        conceptosTitle.WidthPercentage = 100
+                        conceptosTitle.AddCell(New PdfPCell(New Phrase("Conceptos", whiteBold)) With {
+                            .BackgroundColor = verdeSat,
+                            .Padding = 6,
+                            .Border = Rectangle.NO_BORDER
+                        })
+                        doc.Add(conceptosTitle)
+
+                        Dim table As New PdfPTable(5)
+                        table.WidthPercentage = 100
+                        table.SetWidths(New Single() {0.9F, 2.5F, 0.8F, 0.9F, 1.0F})
+                        table.SpacingBefore = 2
+                        table.SpacingAfter = 8
+
+                        Dim headers() As String = {"Clave", "Descripción", "Cantidad", "Precio", "Importe"}
+                        For Each h In headers
+                            table.AddCell(New PdfPCell(New Phrase(h, boldFont)) With {
+                                .BackgroundColor = grisClaro,
+                                .HorizontalAlignment = Element.ALIGN_CENTER
+                            })
+                        Next
+
+                        For Each concepto As XmlNode In conceptosNodes
+                            table.AddCell(New Phrase(getAttr(concepto, "ClaveProdServ"), normalFont))
+                            table.AddCell(New Phrase(getAttr(concepto, "Descripcion"), normalFont))
+                            table.AddCell(New PdfPCell(New Phrase(getAttr(concepto, "Cantidad"), normalFont)) With {.HorizontalAlignment = Element.ALIGN_RIGHT})
+                            table.AddCell(New PdfPCell(New Phrase(getAttr(concepto, "ValorUnitario"), normalFont)) With {.HorizontalAlignment = Element.ALIGN_RIGHT})
+                            table.AddCell(New PdfPCell(New Phrase(getAttr(concepto, "Importe"), normalFont)) With {.HorizontalAlignment = Element.ALIGN_RIGHT})
+                        Next
+
+                        doc.Add(table)
+                    End If
+
+                    ' Totales estilo tarjeta
+                    Dim totalsWrapper As New PdfPTable(2)
+                    totalsWrapper.WidthPercentage = 100
+                    totalsWrapper.SetWidths(New Single() {1.2F, 1.0F})
+
+                    ' Concepto en letra placeholder
+                    Dim leyenda As New Paragraph()
+                    leyenda.Add(New Phrase("Cantidad con letra" & vbLf, boldFont))
+                    leyenda.Add(New Phrase("(No timbrado) " & totalStr & " " & moneda, normalFont))
+
+                    totalsWrapper.AddCell(New PdfPCell(leyenda) With {
+                        .Padding = 10,
+                        .BackgroundColor = grisClaro,
+                        .BorderColor = verdeSat,
+                        .BorderWidth = 1
+                    })
+
+                    Dim totalsTable As New PdfPTable(2)
+                    totalsTable.WidthPercentage = 100
+                    totalsTable.SetWidths(New Single() {1.0F, 1.0F})
+
+                    totalsTable.AddCell(New PdfPCell(New Phrase("Subtotal", boldFont)) With {.HorizontalAlignment = Element.ALIGN_RIGHT, .Border = Rectangle.NO_BORDER})
+                    totalsTable.AddCell(New PdfPCell(New Phrase(subtotalStr, normalFont)) With {.HorizontalAlignment = Element.ALIGN_RIGHT, .Border = Rectangle.NO_BORDER})
+
+                    totalsTable.AddCell(New PdfPCell(New Phrase("IVA", boldFont)) With {.HorizontalAlignment = Element.ALIGN_RIGHT, .Border = Rectangle.NO_BORDER})
+                    totalsTable.AddCell(New PdfPCell(New Phrase(ivaStr, normalFont)) With {.HorizontalAlignment = Element.ALIGN_RIGHT, .Border = Rectangle.NO_BORDER})
+
+                    totalsTable.AddCell(New PdfPCell(New Phrase("Total", boldFont)) With {
+                        .HorizontalAlignment = Element.ALIGN_RIGHT,
+                        .BackgroundColor = grisClaro,
+                        .Border = Rectangle.NO_BORDER
+                    })
+                    totalsTable.AddCell(New PdfPCell(New Phrase(totalStr, boldFont)) With {
+                        .HorizontalAlignment = Element.ALIGN_RIGHT,
+                        .BackgroundColor = grisClaro,
+                        .Border = Rectangle.NO_BORDER
+                    })
+
+                    totalsWrapper.AddCell(New PdfPCell(totalsTable) With {.Padding = 8, .BorderColor = verdeSat, .BorderWidth = 1})
+
+                    doc.Add(totalsWrapper)
+
+                    ' Información de certificación / QR (placeholder si no hay timbre)
+                    Dim infoTable As New PdfPTable(1)
+                    infoTable.WidthPercentage = 100
+                    infoTable.SpacingBefore = 8
+
+                    Dim cadenaOriginal As String = "Sin timbre fiscal: cadena original no disponible"
+                    Dim selloCFDI As String = "Sello CFDI no disponible"
+                    Dim selloSAT As String = "Sello SAT no disponible"
+
+                    infoTable.AddCell(New PdfPCell(New Phrase("Cadena original del complemento de certificación digital del SAT:", boldFont)) With {.BackgroundColor = grisClaro})
+                    infoTable.AddCell(New PdfPCell(New Phrase(cadenaOriginal, normalFont)) With {.PaddingBottom = 6})
+
+                    infoTable.AddCell(New PdfPCell(New Phrase("Sello digital del CFDI:", boldFont)) With {.BackgroundColor = grisClaro})
+                    infoTable.AddCell(New PdfPCell(New Phrase(selloCFDI, normalFont)) With {.PaddingBottom = 6})
+
+                    infoTable.AddCell(New PdfPCell(New Phrase("Sello del SAT:", boldFont)) With {.BackgroundColor = grisClaro})
+                    infoTable.AddCell(New PdfPCell(New Phrase(selloSAT, normalFont)) With {.PaddingBottom = 6})
+
+                    infoTable.AddCell(New PdfPCell(New Phrase("Este documento es una representación impresa del CFDI.", boldFont)) With {
+                        .BackgroundColor = verdeSat,
+                        .HorizontalAlignment = Element.ALIGN_CENTER,
+                        .Padding = 6,
+                        .Border = Rectangle.NO_BORDER
+                    })
+
+                    doc.Add(infoTable)
+                    doc.Add(New Paragraph("Documento generado automáticamente para revisión previa al timbrado.", normalFont))
+                End Using
+            End Using
         Catch ex As Exception
             Throw New Exception("Error al generar PDF: " & ex.Message, ex)
-        Finally
-            ' ORDEN CRÍTICO DE CIERRE:
-            ' 1. Primero cerrar el documento (esto escribe el contenido final al stream)
-            If doc IsNot Nothing Then
-                Try
-                    If doc.IsOpen() Then
-                        doc.Close()
-                    End If
-                Catch ex As Exception
-                    ' Ignorar errores al cerrar
-                End Try
-            End If
-
-            ' 2. Cerrar el writer (esto finaliza el PDF)
-            If writer IsNot Nothing Then
-                Try
-                    writer.Close()
-                Catch ex As Exception
-                    ' Ignorar errores al cerrar
-                End Try
-            End If
-
-            ' 3. Finalmente cerrar el FileStream
-            If fs IsNot Nothing Then
-                Try
-                    fs.Flush()
-                    fs.Close()
-                    fs.Dispose()
-                Catch ex As Exception
-                    ' Ignorar errores al cerrar
-                End Try
-            End If
         End Try
     End Sub
+
 
 End Class
