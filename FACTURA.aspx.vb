@@ -306,7 +306,7 @@ Public Class FACTURA
                     Dim normalFont As New iTextSharp.text.Font(iTextSharp.text.Font.FontFamily.HELVETICA, 10, iTextSharp.text.Font.NORMAL)
                     Dim boldFont As New iTextSharp.text.Font(iTextSharp.text.Font.FontFamily.HELVETICA, 10, iTextSharp.text.Font.BOLD)
 
-                    Dim addAttributesTable = Sub(title As String, attributes As IEnumerable(Of XmlAttribute))
+                    Dim addAttributesTable = Sub(title As String, attributes As XmlAttributeCollection)
                                                   If attributes Is Nothing Then Return
 
                                                   Dim attrList = attributes.Cast(Of XmlAttribute)().ToList()
