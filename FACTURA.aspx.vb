@@ -296,95 +296,86 @@ Public Class FACTURA
             Directory.CreateDirectory(pdfDir)
         End If
 
-        Dim doc As iTextSharp.text.Document = Nothing
-        Dim writer As iTextSharp.text.pdf.PdfWriter = Nothing
-        Dim fs As FileStream = Nothing
-
         Try
-            ' 1. Crear FileStream
-            fs = New FileStream(pdfPath, FileMode.Create, FileAccess.Write, FileShare.None)
+            Using fs As New FileStream(pdfPath, FileMode.Create, FileAccess.Write, FileShare.None)
+                Using doc As New iTextSharp.text.Document(iTextSharp.text.PageSize.LETTER, 36, 36, 36, 36)
+                    iTextSharp.text.pdf.PdfWriter.GetInstance(doc, fs)
 
-            ' 2. Crear Document
-            doc = New iTextSharp.text.Document(iTextSharp.text.PageSize.LETTER, 36, 36, 36, 36)
+                    doc.Open()
 
-            ' 3. Crear Writer
-            writer = iTextSharp.text.pdf.PdfWriter.GetInstance(doc, fs)
+                    ' Fuentes
+                    Dim tituloFont As New iTextSharp.text.Font(iTextSharp.text.Font.FontFamily.HELVETICA, 16, iTextSharp.text.Font.BOLD)
+                    Dim normalFont As New iTextSharp.text.Font(iTextSharp.text.Font.FontFamily.HELVETICA, 10, iTextSharp.text.Font.NORMAL)
+                    Dim smallFont As New iTextSharp.text.Font(iTextSharp.text.Font.FontFamily.COURIER, 7)
 
-            ' 4. Abrir documento
-            doc.Open()
+                    ' Encabezado
+                    doc.Add(New iTextSharp.text.Paragraph("FACTURA CFDI 4.0 (NO TIMBRADA)", tituloFont))
+                    doc.Add(New iTextSharp.text.Paragraph("LA CASA DEL AJUSTE DE MOTOR", normalFont))
+                    doc.Add(New iTextSharp.text.Paragraph(" ", normalFont))
 
-            ' Fuentes
-            Dim tituloFont As New iTextSharp.text.Font(iTextSharp.text.Font.FontFamily.HELVETICA, 16, iTextSharp.text.Font.BOLD)
-            Dim normalFont As New iTextSharp.text.Font(iTextSharp.text.Font.FontFamily.HELVETICA, 10, iTextSharp.text.Font.NORMAL)
+                    ' Cargar XML
+                    Dim xml As New XmlDocument()
+                    xml.Load(xmlPath)
 
-            ' Agregar contenido
-            doc.Add(New iTextSharp.text.Paragraph("FACTURA CFDI 4.0 (NO TIMBRADA)", tituloFont))
-            doc.Add(New iTextSharp.text.Paragraph("LA CASA DEL AJUSTE DE MOTOR", normalFont))
-            doc.Add(New iTextSharp.text.Paragraph(" ", normalFont))
+                    Dim nsmgr As New XmlNamespaceManager(xml.NameTable)
+                    nsmgr.AddNamespace("cfdi", "http://www.sat.gob.mx/cfd/4")
 
-            ' Cargar XML
-            Dim xml As New XmlDocument()
-            xml.Load(xmlPath)
+                    Dim compNode As XmlNode = xml.SelectSingleNode("//cfdi:Comprobante", nsmgr)
 
-            Dim nsmgr As New XmlNamespaceManager(xml.NameTable)
-            nsmgr.AddNamespace("cfdi", "http://www.sat.gob.mx/cfd/4")
+                    If compNode IsNot Nothing Then
+                        Dim serie As String = If(compNode.Attributes("Serie") IsNot Nothing, compNode.Attributes("Serie").Value, "")
+                        Dim folio As String = If(compNode.Attributes("Folio") IsNot Nothing, compNode.Attributes("Folio").Value, "")
+                        Dim fecha As String = If(compNode.Attributes("Fecha") IsNot Nothing, compNode.Attributes("Fecha").Value, "")
+                        Dim total As String = If(compNode.Attributes("Total") IsNot Nothing, compNode.Attributes("Total").Value, "")
 
-            Dim compNode As XmlNode = xml.SelectSingleNode("//cfdi:Comprobante", nsmgr)
+                        doc.Add(New iTextSharp.text.Paragraph("Serie: " & serie, normalFont))
+                        doc.Add(New iTextSharp.text.Paragraph("Folio: " & folio, normalFont))
+                        doc.Add(New iTextSharp.text.Paragraph("Fecha: " & fecha, normalFont))
+                        doc.Add(New iTextSharp.text.Paragraph("Total: " & total, normalFont))
+                        doc.Add(New iTextSharp.text.Paragraph(" ", normalFont))
+                    End If
 
-            If compNode IsNot Nothing Then
-                Dim serie As String = If(compNode.Attributes("Serie") IsNot Nothing, compNode.Attributes("Serie").Value, "")
-                Dim folio As String = If(compNode.Attributes("Folio") IsNot Nothing, compNode.Attributes("Folio").Value, "")
-                Dim fecha As String = If(compNode.Attributes("Fecha") IsNot Nothing, compNode.Attributes("Fecha").Value, "")
-                Dim total As String = If(compNode.Attributes("Total") IsNot Nothing, compNode.Attributes("Total").Value, "")
+                    ' Receptor
+                    Dim receptorNode As XmlNode = xml.SelectSingleNode("//cfdi:Receptor", nsmgr)
+                    If receptorNode IsNot Nothing Then
+                        doc.Add(New iTextSharp.text.Paragraph("Receptor: " & If(receptorNode.Attributes("Nombre")?.Value, ""), normalFont))
+                        doc.Add(New iTextSharp.text.Paragraph("RFC: " & If(receptorNode.Attributes("Rfc")?.Value, ""), normalFont))
+                        doc.Add(New iTextSharp.text.Paragraph(" ", normalFont))
+                    End If
 
-                doc.Add(New iTextSharp.text.Paragraph("Serie: " & serie, normalFont))
-                doc.Add(New iTextSharp.text.Paragraph("Folio: " & folio, normalFont))
-                doc.Add(New iTextSharp.text.Paragraph("Fecha: " & fecha, normalFont))
-                doc.Add(New iTextSharp.text.Paragraph("Total: " & total, normalFont))
-                doc.Add(New iTextSharp.text.Paragraph(" ", normalFont))
-            End If
+                    ' Tabla de conceptos
+                    Dim conceptosNodes As XmlNodeList = xml.SelectNodes("//cfdi:Conceptos/cfdi:Concepto", nsmgr)
+                    If conceptosNodes IsNot Nothing AndAlso conceptosNodes.Count > 0 Then
+                        Dim table As New iTextSharp.text.pdf.PdfPTable(4)
+                        table.WidthPercentage = 100
+                        table.SetWidths(New Single() {3.0F, 1.0F, 1.0F, 1.0F})
 
-            doc.Add(New iTextSharp.text.Paragraph("XML generado (vista rápida):", normalFont))
-            doc.Add(New iTextSharp.text.Paragraph(" ", normalFont))
+                        table.AddCell(New Phrase("Descripción", normalFont))
+                        table.AddCell(New Phrase("Cantidad", normalFont))
+                        table.AddCell(New Phrase("Precio", normalFont))
+                        table.AddCell(New Phrase("Importe", normalFont))
 
-            Dim xmlTexto As String = File.ReadAllText(xmlPath)
-            Dim chunk As New iTextSharp.text.Paragraph(xmlTexto, New iTextSharp.text.Font(iTextSharp.text.Font.FontFamily.COURIER, 7))
-            doc.Add(chunk)
+                        For Each concepto As XmlNode In conceptosNodes
+                            table.AddCell(New Phrase(If(concepto.Attributes("Descripcion")?.Value, ""), normalFont))
+                            table.AddCell(New Phrase(If(concepto.Attributes("Cantidad")?.Value, ""), normalFont))
+                            table.AddCell(New Phrase(If(concepto.Attributes("ValorUnitario")?.Value, ""), normalFont))
+                            table.AddCell(New Phrase(If(concepto.Attributes("Importe")?.Value, ""), normalFont))
+                        Next
 
+                        doc.Add(table)
+                        doc.Add(New iTextSharp.text.Paragraph(" ", normalFont))
+                    End If
+
+                    ' Resumen del XML completo para depuración
+                    doc.Add(New iTextSharp.text.Paragraph("XML generado (vista rápida):", normalFont))
+                    doc.Add(New iTextSharp.text.Paragraph(" ", normalFont))
+
+                    Dim xmlTexto As String = File.ReadAllText(xmlPath)
+                    doc.Add(New iTextSharp.text.Paragraph(xmlTexto, smallFont))
+                End Using
+            End Using
         Catch ex As Exception
             Throw New Exception("Error al generar PDF: " & ex.Message, ex)
-        Finally
-            ' ORDEN CRÍTICO DE CIERRE:
-            ' 1. Primero cerrar el documento (esto escribe el contenido final al stream)
-            If doc IsNot Nothing Then
-                Try
-                    If doc.IsOpen() Then
-                        doc.Close()
-                    End If
-                Catch ex As Exception
-                    ' Ignorar errores al cerrar
-                End Try
-            End If
-
-            ' 2. Cerrar el writer (esto finaliza el PDF)
-            If writer IsNot Nothing Then
-                Try
-                    writer.Close()
-                Catch ex As Exception
-                    ' Ignorar errores al cerrar
-                End Try
-            End If
-
-            ' 3. Finalmente cerrar el FileStream
-            If fs IsNot Nothing Then
-                Try
-                    fs.Flush()
-                    fs.Close()
-                    fs.Dispose()
-                Catch ex As Exception
-                    ' Ignorar errores al cerrar
-                End Try
-            End If
         End Try
     End Sub
 
