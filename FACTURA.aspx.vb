@@ -306,6 +306,27 @@ Public Class FACTURA
                     Dim normalFont As New iTextSharp.text.Font(iTextSharp.text.Font.FontFamily.HELVETICA, 10, iTextSharp.text.Font.NORMAL)
                     Dim boldFont As New iTextSharp.text.Font(iTextSharp.text.Font.FontFamily.HELVETICA, 10, iTextSharp.text.Font.BOLD)
 
+                    Dim addAttributesTable = Sub(title As String, attributes As IEnumerable(Of XmlAttribute))
+                                                  If attributes Is Nothing Then Return
+
+                                                  Dim attrList = attributes.Cast(Of XmlAttribute)().ToList()
+                                                  If attrList.Count = 0 Then Return
+
+                                                  doc.Add(New Paragraph(title, sectionFont))
+
+                                                  Dim table As New PdfPTable(2)
+                                                  table.WidthPercentage = 100
+                                                  table.SetWidths(New Single() {0.9F, 2.1F})
+                                                  table.SpacingAfter = 8
+
+                                                  For Each attr In attrList
+                                                      table.AddCell(New PdfPCell(New Phrase(attr.LocalName & ":", boldFont)) With {.BackgroundColor = New BaseColor(240, 240, 240)})
+                                                      table.AddCell(New PdfPCell(New Phrase(attr.Value, normalFont)))
+                                                  Next
+
+                                                  doc.Add(table)
+                                              End Sub
+
                     ' Cargar XML
                     Dim xml As New XmlDocument()
                     xml.Load(xmlPath)
@@ -323,7 +344,10 @@ Public Class FACTURA
                     Dim subtotalStr As String = If(compNode?.Attributes("SubTotal") IsNot Nothing, compNode.Attributes("SubTotal").Value, "")
                     Dim totalStr As String = If(compNode?.Attributes("Total") IsNot Nothing, compNode.Attributes("Total").Value, "")
                     Dim ivaStr As String = ""
-                    Dim trasladoGlobal As XmlNode = xml.SelectSingleNode("//cfdi:Impuestos/cfdi:Traslados/cfdi:Traslado", nsmgr)
+                    Dim trasladoGlobal As XmlNode = xml.SelectSingleNode("//cfdi:Comprobante/cfdi:Impuestos/cfdi:Traslados/cfdi:Traslado", nsmgr)
+                    If trasladoGlobal Is Nothing Then
+                        trasladoGlobal = xml.SelectSingleNode("//*[local-name()='Comprobante']/*[local-name()='Impuestos']/*[local-name()='Traslados']/*[local-name()='Traslado']")
+                    End If
                     If trasladoGlobal IsNot Nothing Then
                         ivaStr = If(trasladoGlobal.Attributes("Importe") IsNot Nothing, trasladoGlobal.Attributes("Importe").Value, "")
                     End If
@@ -348,24 +372,10 @@ Public Class FACTURA
 
                     doc.Add(infoTable)
 
-                    ' Datos del emisor y receptor
-                    doc.Add(New Paragraph("Datos fiscales", sectionFont))
-                    doc.Add(Chunk.NEWLINE)
-
-                    Dim fiscalTable As New PdfPTable(2)
-                    fiscalTable.WidthPercentage = 100
-                    fiscalTable.SetWidths(New Single() {1.0F, 1.0F})
-                    fiscalTable.SpacingAfter = 10
-
-                    Dim emisorNombre As String = If(emisorNode?.Attributes("Nombre") IsNot Nothing, emisorNode.Attributes("Nombre").Value, "")
-                    Dim emisorRfc As String = If(emisorNode?.Attributes("Rfc") IsNot Nothing, emisorNode.Attributes("Rfc").Value, "")
-                    Dim receptorNombre As String = If(receptorNode?.Attributes("Nombre") IsNot Nothing, receptorNode.Attributes("Nombre").Value, "")
-                    Dim receptorRfc As String = If(receptorNode?.Attributes("Rfc") IsNot Nothing, receptorNode.Attributes("Rfc").Value, "")
-
-                    fiscalTable.AddCell(New PdfPCell(New Phrase("Emisor:" & vbCrLf & emisorNombre & vbCrLf & "RFC: " & emisorRfc, normalFont)) With {.Border = Rectangle.BOX})
-                    fiscalTable.AddCell(New PdfPCell(New Phrase("Receptor:" & vbCrLf & receptorNombre & vbCrLf & "RFC: " & receptorRfc, normalFont)) With {.Border = Rectangle.BOX})
-
-                    doc.Add(fiscalTable)
+                    ' Desglose completo de atributos
+                    addAttributesTable("Datos del comprobante", compNode?.Attributes)
+                    addAttributesTable("Datos del emisor", emisorNode?.Attributes)
+                    addAttributesTable("Datos del receptor", receptorNode?.Attributes)
 
                     ' Tabla de conceptos con estilo de factura
                     Dim conceptosNodes As XmlNodeList = xml.SelectNodes("//*[local-name()='Conceptos']/*[local-name()='Concepto']")
@@ -393,18 +403,38 @@ Public Class FACTURA
                             table.AddCell(New PdfPCell(New Phrase(h, boldFont)) With {.BackgroundColor = headerBg})
                         Next
 
+                        Dim idx As Integer = 1
                         For Each concepto As XmlNode In conceptosNodes
                             table.AddCell(New Phrase(getAttr(concepto, "ClaveProdServ"), normalFont))
                             table.AddCell(New Phrase(getAttr(concepto, "Descripcion"), normalFont))
                             table.AddCell(New PdfPCell(New Phrase(getAttr(concepto, "Cantidad"), normalFont)) With {.HorizontalAlignment = Element.ALIGN_RIGHT})
                             table.AddCell(New PdfPCell(New Phrase(getAttr(concepto, "ValorUnitario"), normalFont)) With {.HorizontalAlignment = Element.ALIGN_RIGHT})
                             table.AddCell(New PdfPCell(New Phrase(getAttr(concepto, "Importe"), normalFont)) With {.HorizontalAlignment = Element.ALIGN_RIGHT})
+                            idx += 1
                         Next
 
                         doc.Add(table)
+
+                        ' Mostrar atributos completos de cada concepto (incluidos impuestos)
+                        idx = 1
+                        For Each concepto As XmlNode In conceptosNodes
+                            Dim tituloConcepto As String = "Concepto " & idx & " - " & getAttr(concepto, "Descripcion")
+                            addAttributesTable(tituloConcepto, concepto.Attributes)
+
+                            Dim impuestosConcepto As XmlNodeList = concepto.SelectNodes("./*[local-name()='Impuestos']/*/*")
+                            If impuestosConcepto IsNot Nothing Then
+                                Dim impIdx As Integer = 1
+                                For Each imp As XmlNode In impuestosConcepto
+                                    addAttributesTable(tituloConcepto & " / " & imp.LocalName & " " & impIdx, imp.Attributes)
+                                    impIdx += 1
+                                Next
+                            End If
+
+                            idx += 1
+                        Next
                     End If
 
-                    ' Totales estilo factura
+                    ' Totales estilo factura y desglose de impuestos globales
                     doc.Add(New Paragraph("Resumen", sectionFont))
 
                     Dim totalsTable As New PdfPTable(2)
@@ -430,6 +460,16 @@ Public Class FACTURA
                     totalsTable.SpacingBefore = 5
 
                     doc.Add(totalsTable)
+
+                    Dim impuestosGlobales As XmlNodeList = xml.SelectNodes("//*[local-name()='Comprobante']/*[local-name()='Impuestos']/*/*")
+                    If impuestosGlobales IsNot Nothing AndAlso impuestosGlobales.Count > 0 Then
+                        Dim impIdx As Integer = 1
+                        For Each imp As XmlNode In impuestosGlobales
+                            addAttributesTable("Impuesto global " & imp.LocalName & " " & impIdx, imp.Attributes)
+                            impIdx += 1
+                        Next
+                    End If
+
                     doc.Add(Chunk.NEWLINE)
                     doc.Add(New Paragraph("Documento generado automáticamente para revisión previa al timbrado.", normalFont))
                 End Using
