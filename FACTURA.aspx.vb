@@ -334,16 +334,20 @@ Public Class FACTURA
                                             Return val
                                         End Function
 
-                    Dim getAttr = Function(node As XmlNode, attrName As String, Optional defaultVal As String = "") As String
-                                      If node Is Nothing OrElse node.Attributes Is Nothing Then Return defaultVal
+                    Dim getAttrWithDefault = Function(node As XmlNode, attrName As String, defaultVal As String) As String
+                                                 If node Is Nothing OrElse node.Attributes Is Nothing Then Return defaultVal
 
-                                      Dim attr = node.Attributes.Cast(Of XmlAttribute)() _
-                                          .FirstOrDefault(Function(a) String.Equals(a.LocalName, attrName, StringComparison.OrdinalIgnoreCase) _
-                                                                    OrElse String.Equals(a.Name, attrName, StringComparison.OrdinalIgnoreCase))
+                                                 Dim attr = node.Attributes.Cast(Of XmlAttribute)() _
+                                                     .FirstOrDefault(Function(a) String.Equals(a.LocalName, attrName, StringComparison.OrdinalIgnoreCase) _
+                                                                               OrElse String.Equals(a.Name, attrName, StringComparison.OrdinalIgnoreCase))
 
-                                      If attr Is Nothing Then Return defaultVal
-                                      Return valueOrDefault(attr.Value, defaultVal)
-                                  End Function
+                                                 If attr Is Nothing Then Return defaultVal
+                                                 Return valueOrDefault(attr.Value, defaultVal)
+                                             End Function
+
+                    Dim getAttr = Function(node As XmlNode, attrName As String) As String
+                                       Return getAttrWithDefault(node, attrName, "")
+                                   End Function
 
                     Dim serie As String = valueOrDefault(getAttr(compNode, "Serie"), "N/D")
                     Dim folio As String = valueOrDefault(getAttr(compNode, "Folio"), "N/D")
