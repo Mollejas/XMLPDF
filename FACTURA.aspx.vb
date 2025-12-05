@@ -1,17 +1,23 @@
-﻿Imports System
+Imports System
 Imports System.IO
 Imports System.Globalization
 Imports System.Linq
+Imports System.Security.Cryptography.X509Certificates
+Imports System.Text
 Imports System.Web
 Imports System.Web.UI
 Imports System.Web.UI.WebControls
 Imports System.Xml
+Imports System.Xml.Xsl
 Imports System.Data.SqlClient
 
 Imports Newtonsoft.Json
 
 Imports iTextSharp.text
 Imports iTextSharp.text.pdf
+Imports Org.BouncyCastle.Crypto.Parameters
+Imports Org.BouncyCastle.Pkcs
+Imports Org.BouncyCastle.Security
 
 
 
@@ -115,6 +121,77 @@ Public Class FACTURA
         Public Property RFC As String
     End Class
 
+    Private Class CertificadoData
+        Public Property NoCertificado As String
+        Public Property CertificadoBase64 As String
+        Public Property LlavePrivada As RsaPrivateCrtKeyParameters
+    End Class
+
+    Private Function ObtenerCarpetaCertificados() As String
+        Dim dir = Server.MapPath("~/App_Data/Certificados")
+        If Not Directory.Exists(dir) Then
+            Directory.CreateDirectory(dir)
+        End If
+        Return dir
+    End Function
+
+    Private Function CargarCertificadoActivo() As CertificadoData
+        Dim certDir = ObtenerCarpetaCertificados()
+        Dim cerPath = Path.Combine(certDir, "certificado.cer")
+        Dim keyPath = Path.Combine(certDir, "llave.key")
+        Dim pwdPath = Path.Combine(certDir, "password.txt")
+
+        If Not (File.Exists(cerPath) AndAlso File.Exists(keyPath) AndAlso File.Exists(pwdPath)) Then
+            Return Nothing
+        End If
+
+        Dim password = File.ReadAllText(pwdPath).Trim()
+        Dim cert = New X509Certificate2(cerPath)
+
+        Dim serialBytes = cert.GetSerialNumber()
+        Array.Reverse(serialBytes)
+        Dim noCertificado = BitConverter.ToString(serialBytes).Replace("-", "")
+
+        Dim llavePrivada = DirectCast(PrivateKeyFactory.DecryptKey(password.ToCharArray(), File.ReadAllBytes(keyPath)), RsaPrivateCrtKeyParameters)
+
+        Return New CertificadoData() With {
+            .NoCertificado = noCertificado,
+            .CertificadoBase64 = Convert.ToBase64String(cert.RawData),
+            .LlavePrivada = llavePrivada
+        }
+    End Function
+
+    Private Function GenerarCadenaOriginalCFDI(xml As XmlDocument) As String
+        Dim xsltPath = Server.MapPath("~/App_Data/cadenaoriginal_4_0.xslt")
+        If Not File.Exists(xsltPath) Then
+            Throw New FileNotFoundException("No se encontró la plantilla de cadena original.", xsltPath)
+        End If
+
+        Dim xslt As New XslCompiledTransform(True)
+        xslt.Load(xsltPath)
+
+        Dim settings As New XmlWriterSettings() With {
+            .OmitXmlDeclaration = True,
+            .ConformanceLevel = ConformanceLevel.Fragment
+        }
+
+        Using sw As New StringWriter()
+            Using xw = XmlWriter.Create(sw, settings)
+                xslt.Transform(xml, Nothing, xw)
+            End Using
+            Return sw.ToString()
+        End Using
+    End Function
+
+    Private Function FirmarCadenaOriginal(cadenaOriginal As String, llavePrivada As RsaPrivateCrtKeyParameters) As String
+        Dim signer = SignerUtilities.GetSigner("SHA256withRSA")
+        signer.Init(True, llavePrivada)
+        Dim data = Encoding.UTF8.GetBytes(cadenaOriginal)
+        signer.BlockUpdate(data, 0, data.Length)
+        Dim signature = signer.GenerateSignature()
+        Return Convert.ToBase64String(signature)
+    End Function
+
     ' ===================================================================
     ' OBTENER DATOS DEL CLIENTE (CLIRFC, NOMBRE) DESDE FCACLI1
     ' ===================================================================
@@ -164,6 +241,11 @@ Public Class FACTURA
         root.SetAttribute("xsi:schemaLocation",
                               "http://www.sat.gob.mx/cfd/4 http://www.sat.gob.mx/sitio_internet/cfd/4/cfdv40.xsd")
 
+        Dim certificadoActivo = CargarCertificadoActivo()
+        If certificadoActivo Is Nothing Then
+            Throw New InvalidOperationException("Carga primero tu .cer, .key y contraseña en la página de Sellos digitales.")
+        End If
+
         ' Cálculo de totales
         Dim subTotal As Decimal = f.conceptos.Sum(Function(c) c.importe)
         Dim iva As Decimal = Math.Round(subTotal * 0.16D, 2)
@@ -184,6 +266,8 @@ Public Class FACTURA
         root.SetAttribute("FormaPago", "01")            ' Ejemplo: 01 Efectivo (ajusta según tu catálogo)
         root.SetAttribute("Exportacion", "01")          ' No aplica
         root.SetAttribute("LugarExpedicion", "64000")   ' CP del emisor
+        root.SetAttribute("NoCertificado", certificadoActivo.NoCertificado)
+        root.SetAttribute("Certificado", certificadoActivo.CertificadoBase64)
 
         ' Emisor (DEBES PONER TUS DATOS REALES)
         Dim emisor = xml.CreateElement("cfdi:Emisor")
@@ -273,6 +357,10 @@ Public Class FACTURA
         impGlobal.AppendChild(trasladosGlobal)
         root.AppendChild(impGlobal)
 
+        Dim cadenaOriginal = GenerarCadenaOriginalCFDI(xml)
+        Dim sello = FirmarCadenaOriginal(cadenaOriginal, certificadoActivo.LlavePrivada)
+        root.SetAttribute("Sello", sello)
+
         xml.Save(xmlPath)
     End Sub
 
@@ -357,6 +445,9 @@ Public Class FACTURA
                     Dim lugarExp As String = valueOrDefault(getAttr(compNode, "LugarExpedicion"), "N/D")
                     Dim moneda As String = valueOrDefault(getAttr(compNode, "Moneda"), "MXN")
                     Dim tipoComp As String = valueOrDefault(getAttr(compNode, "TipoDeComprobante"), "I")
+                    Dim noCertificado As String = valueOrDefault(getAttr(compNode, "NoCertificado"), "N/D")
+                    Dim certificadoBase64 As String = valueOrDefault(getAttr(compNode, "Certificado"), "Certificado no disponible")
+                    Dim selloComprobante As String = valueOrDefault(getAttr(compNode, "Sello"), "Sello CFDI no disponible")
 
                     Dim subtotalStr As String = valueOrDefault(getAttr(compNode, "SubTotal"), "0.00")
                     Dim totalStr As String = valueOrDefault(getAttr(compNode, "Total"), "0.00")
@@ -536,9 +627,20 @@ Public Class FACTURA
                     infoTable.SpacingBefore = 8
 
                     Dim cadenaOriginal As String = "Sin timbre fiscal: cadena original no disponible"
-                    Dim selloCFDI As String = "Sello CFDI no disponible"
+                    Try
+                        cadenaOriginal = GenerarCadenaOriginalCFDI(xml)
+                    Catch ex As Exception
+                        cadenaOriginal = "Cadena original no disponible: " & ex.Message
+                    End Try
+
+                    Dim selloCFDI As String = selloComprobante
                     Dim selloSAT As String = "Sello SAT no disponible"
 
+                    infoTable.AddCell(New PdfPCell(New Phrase("No. certificado digital:", boldFont)) With {.BackgroundColor = grisClaro})
+                    infoTable.AddCell(New PdfPCell(New Phrase(noCertificado, normalFont)) With {.PaddingBottom = 6})
+
+                    infoTable.AddCell(New PdfPCell(New Phrase("Certificado (Base64):", boldFont)) With {.BackgroundColor = grisClaro})
+                    infoTable.AddCell(New PdfPCell(New Phrase(certificadoBase64, normalFont)) With {.PaddingBottom = 6})
                     infoTable.AddCell(New PdfPCell(New Phrase("Cadena original del complemento de certificación digital del SAT:", boldFont)) With {.BackgroundColor = grisClaro})
                     infoTable.AddCell(New PdfPCell(New Phrase(cadenaOriginal, normalFont)) With {.PaddingBottom = 6})
 
